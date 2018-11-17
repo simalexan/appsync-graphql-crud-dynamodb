@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  TableName: 
+    Type: String
+    Description: (Required) The name of the DynamoDB table you want to create and save to. Minimum 3 characters
+    MinLength: 3
+    MaxLength: 50
+    ConstraintDescription: 'Required parameter. Must be characters and/or underscores. No numbers allowed.'
+    Default: 'yourDBTableName'
+    AllowedPattern: ^[A-Za-z_]+$
+  StageEnvironment:
+    Type: String
+    MinLength: 3
+    MaxLength: 15
+    Default: 'dev'
+
+Resources:
+
+  AppSyncApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: !Sub ${TableName}Api${StageEnvironment}
+      AuthenticationType: API_KEY
+    
+  AppSyncAPIKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+  
+  AppSyncSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      Definition: !Sub |
+        type ${TableName} {
+          ${TableName}Id: ID!
+          name: String
+        }
+        type Query {
+          getAll(): [${TableName}]
+          getOne(${TableName}Id: ID!): ${TableName}
+        }
+        type Mutation {
+          save(${TableName}Id: ID!, name: String!): ${TableName}
+          delete(${TableName}Id: ID!): ${TableName}
+        }
+        type Schema {
+          query: Query
+          mutation: Mutation
+        }
+
+  AppSyncTableDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      Name: !Ref TableName
+      Description: DynamoDB Table AppSync Data Source
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn: !GetAtt DynamoDBRole.Arn
+      DynamoDBConfig:
+        TableName: !Ref DynamoDBTable
+        AwsRegion: !Sub ${AWS::Region}
+
+  AppSyncGetOneQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Query
+      FieldName: getOne
+      DataSourceName: !GetAtt AppSyncTableDataSource.Name
+      RequestMappingTemplate: !Sub |
+        {
+          "version": "2017-02-28",
+          "operation": "GetItem",
+          "key": {
+            "${TableName}Id": $util.dynamodb.toDynamoDBJson($ctx.args.${TableName}Id)
+          }
+        }
+      ResponseMappingTemplate: "$util.toJson($ctx.result)"
+
+  AppSyncGetAllQueryResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Query
+      FieldName: getAll
+      DataSourceName: !GetAtt AppSyncTableDataSource.Name
+      RequestMappingTemplate: !Sub |
+        {
+          "version": "2017-02-28",
+          "operation" : "Scan"
+        }
+      ResponseMappingTemplate: "$util.toJson($ctx.result.items)"
+
+  AppSyncSaveMutationResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Mutation
+      FieldName: save
+      DataSourceName: !GetAtt AppSyncTableDataSource.Name
+      RequestMappingTemplate: !Sub |
+        {
+          "version": "2017-02-28",
+          "operation": "PutItem",
+          "key": {
+            "${TableName}Id": $util.dynamodb.toDynamoDBJson($ctx.args.${TableName}Id)
+          }
+        }
+      ResponseMappingTemplate: "$util.toJson($ctx.result)"
+
+  AppSyncDeleteMutationResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: AppSyncSchema
+    Properties:
+      ApiId: !GetAtt AppSyncApi.ApiId
+      TypeName: Mutation
+      FieldName: delete
+      DataSourceName: !GetAtt AppSyncTableDataSource.Name
+      RequestMappingTemplate: !Sub |
+        {
+          "version": "2017-02-28",
+          "operation": "DeleteItem",
+          "key": {
+            "${TableName}Id": $util.dynamodb.toDynamoDBJson($ctx.args.${TableName}Id)
+          }
+        }
+      ResponseMappingTemplate: "$util.toJson($ctx.result)"
+
+  DynamoDBRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${TableName}-appsync-dynamodb-role
+      ManagedPolicyArns:
+        - Ref: AppSyncDynamoDBPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+    DependsOn:
+      - AppSyncDynamoDBPolicy
+
+  AppSyncDynamoDBPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy to allow AWS AppSync to access the tables created by this template.
+      Path: /appsync/
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:DeleteItem
+              - dynamodb:UpdateItem
+              - dynamodb:BatchGetItem
+              - dynamodb:BatchWriteItem
+            Resource: !Join [ '', [ !GetAtt DynamoDBTable.Arn, '*' ] ]
+
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      AttributeDefinitions:
+        -
+          AttributeName: !Sub ${TableName}Id
+          AttributeType: S
+      KeySchema:
+        -
+          AttributeName: !Sub ${TableName}Id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+Outputs:  
+  DynamoDBTable:
+    Description: The name of the DynamoDB Table
+    Value: !Ref DynamoDBTable
+  GraphQLApiEndpoint:
+    Description: The URL to the GraphQL Endpoint
+    Value: !GetAtt AppSyncApi.GraphQLUrl
+  GraphQLApiId:
+    Description: The API ID of the GraphQL API
+    Value: !GetAtt AppSyncApi.ApiId
+  APIKey:
+    Description: API Key
+    Value: !GetAtt AppSyncAPIKey.ApiKey
