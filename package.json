@@ -2,12 +2,11 @@
   "name": "appsync-graphql-crud-dynamodb",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
   "scripts": {
     "package": "aws cloudformation package --template-file template.yml --s3-bucket appsync-graphql-crud-dynamodb --output-template-file output.yml",
     "deploy": "aws cloudformation deploy --template-file output.yml --stack-name appsync-graphql-crud-dynamodb --capabilities CAPABILITY_NAMED_IAM",
     "qd": "npm run package && npm run deploy"
   },
-  "author": "",
+  "author": "Aleksandar Simovic <alexander.simovic@gmail.com>",
   "license": "MIT"
 }

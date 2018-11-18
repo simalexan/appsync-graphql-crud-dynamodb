@@ -38,8 +38,12 @@ Resources:
           ${TableName}Id: ID!
           name: String
         }
+        type Paginated${TableName} {
+          items: [${TableName}!]!
+          nextToken: String
+        }
         type Query {
-          getAll(): [${TableName}]
+          all(limit: Int, nextToken: String): Paginated${TableName}!
           getOne(${TableName}Id: ID!): ${TableName}
         }
         type Mutation {
@@ -81,20 +85,22 @@ Resources:
         }
       ResponseMappingTemplate: "$util.toJson($ctx.result)"
 
-  AppSyncGetAllQueryResolver:
+  AppSyncAllQueryResolver:
     Type: AWS::AppSync::Resolver
     DependsOn: AppSyncSchema
     Properties:
       ApiId: !GetAtt AppSyncApi.ApiId
       TypeName: Query
-      FieldName: getAll
+      FieldName: all
       DataSourceName: !GetAtt AppSyncTableDataSource.Name
       RequestMappingTemplate: !Sub |
         {
           "version": "2017-02-28",
-          "operation" : "Scan"
-        }
-      ResponseMappingTemplate: "$util.toJson($ctx.result.items)"
+          "operation" : "Scan",
+          "limit": $util.defaultIfNull($ctx.args.limit, 20),
+          "nextToken": $util.toJson($util.defaultIfNullOrEmpty($ctx.args.nextToken, null))
+        },
+      ResponseMappingTemplate: "$util.toJson($ctx.result)"
 
   AppSyncSaveMutationResolver:
     Type: AWS::AppSync::Resolver
@@ -110,6 +116,9 @@ Resources:
           "operation": "PutItem",
           "key": {
             "${TableName}Id": $util.dynamodb.toDynamoDBJson($ctx.args.${TableName}Id)
+          },
+          "attributeValues": {
+            "name": $util.dynamodb.toDynamoDBJson($ctx.args.name)
           }
         }
       ResponseMappingTemplate: "$util.toJson($ctx.result)"
@@ -137,7 +146,7 @@ Resources:
     Properties:
       RoleName: !Sub ${TableName}-appsync-dynamodb-role
       ManagedPolicyArns:
-        - Ref: AppSyncDynamoDBPolicy
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -147,28 +156,6 @@ Resources:
             Principal:
               Service:
                 - appsync.amazonaws.com
-    DependsOn:
-      - AppSyncDynamoDBPolicy
-
-  AppSyncDynamoDBPolicy:
-    Type: AWS::IAM::ManagedPolicy
-    Properties:
-      Description: Policy to allow AWS AppSync to access the tables created by this template.
-      Path: /appsync/
-      PolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          - Effect: Allow
-            Action:
-              - dynamodb:Query
-              - dynamodb:Scan
-              - dynamodb:GetItem
-              - dynamodb:PutItem
-              - dynamodb:DeleteItem
-              - dynamodb:UpdateItem
-              - dynamodb:BatchGetItem
-              - dynamodb:BatchWriteItem
-            Resource: !Join [ '', [ !GetAtt DynamoDBTable.Arn, '*' ] ]
 
   DynamoDBTable:
     Type: AWS::DynamoDB::Table
