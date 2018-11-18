@@ -5,8 +5,8 @@
 
 This is a serverless component consisting of:
 
-- an AppSync GraphQL API
-- several resolvers to save, delete, get one, get all items from a DynamoDB Table
+- an AppSync GraphQL API with CRUD operations and a single item schema
+- CRUD resolvers to save, delete, get one, get all items from a DynamoDB Table
 - a DynamoDB table, where all your data is stored.
 
 Aside from this main functionality, its important features are:
